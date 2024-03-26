@@ -1,20 +1,45 @@
 public class SLDXDataCleanerBatch implements Database.Batchable<sObject>, Database.Stateful{
 	
 	private SLDX_Data_Cleaner_Configuration__mdt configs;
-	private List<String> storeNumbers;
+	private List<String> storeIds;
+    private DateTime timestamp;
 	
-	public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, List<String> storeNumbers){
+    //timestamp not needed for scheduled runs
+    public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, List<String> storeIds){
         this.configs = configs;
-        this.storeNumbers = storeNumbers;
+        this.storeIds = storeIds;
+    }
+
+	public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, List<String> storeIds, DateTime timestamp){
+        this.configs = configs;
+        this.storeIds = storeIds;
+        this.timestamp = timestamp;
     }
 
     public Database.QueryLocator start(Database.BatchableContext bc){
-        //Utilize configs and storeNumbers to generate query for all records that need to be deleted
-        //If storeNumbers is empty or null, just grab all stores. This means it is a scheduled run, or full refresh
+        String query = this.configs.Data_Cleaner_Query__c;
+        
+        //no store id's means it's a scheduled run and should grab all SLDX records of given category.
+        if(this.storeIds != null && !storeIds.isEmpty()){
+            query += ' WHERE Store__c IN: (' + String.join(this.storeIds, ',') + ')';
+        }
+
+        return Database.getQueryLocator(query);
     }
 
     public void execute(Database.BatchableContext bc, List<sObject> records){
+        List<sObject> recordsToDelete = this.configs.Is_Scheduled_Config__c ? records : getDeletableSldxRecords(records);
+
+        try{
+            delete recordsToDelete;
+        }catch(Exception e){
+            //handle error
+        }
+    }
+
+    private List<sObject> getDeletableSldxRecords(List<sObject> records){
         List<sObject> recordsToDelete;
+
         if(String.isNotEmpty(this.configs.Data_Cleaner_Apex_Filter__c)){
             Type filterType = Type.forname(this.configs.Data_Cleaner_Apex_Filter__c);
             SLDXDataCleanerFilterInterface filter = (SLDXDataCleanerFilterInterface) filterType.newInstance();
@@ -25,7 +50,20 @@ public class SLDXDataCleanerBatch implements Database.Batchable<sObject>, Databa
         }else{
             recordsToDelete = records;
         }
-        //Delete records, record any failures
+
+        recordsToDelete = findNonSldxRecords(recordsToDelete);
+        
+    }
+
+    private List<sObject> findNonSldxRecords(List<sObject> allRecords){
+        List<sObject> nonSldxRecords = new List<sObject>(); 
+        for(sObject record:recordsToDelete){
+            //ensure that this is the correct way to check datetime equality, and there are no edge cases
+            if(record.SLDX_Timestamp__c != this.timestamp){
+                nonSldxRecords.add(record);
+            }
+        }
+        return nonSldxRecords;
     }
 
     public void finish(Database.BatchableContext bc){
