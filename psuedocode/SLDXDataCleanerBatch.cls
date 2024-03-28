@@ -1,19 +1,19 @@
 public class SLDXDataCleanerBatch implements Database.Batchable<sObject>, Database.Stateful{
 	
 	private SLDX_Data_Cleaner_Configuration__mdt configs;
-	private List<String> storeIds;
-    private DateTime timestamp;
+	private Map<String, DateTime> storeIdsToTimestamps;
+    private List<String> storeIds;
 	
     //timestamp not needed for scheduled runs
-    public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, List<String> storeIds){
+    public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs){
         this.configs = configs;
-        this.storeIds = storeIds;
     }
 
-	public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, List<String> storeIds, DateTime timestamp){
+	public SLDXDataCleanerBatch(SLDX_Data_Cleaner_Configuration__mdt configs, Map<String, DateTime> storeIdsToTimestamps, DateTime timestamp){
         this.configs = configs;
-        this.storeIds = storeIds;
-        this.timestamp = timestamp;
+        this.storeIdsToTimestamps = storeIdsToTimestamps;
+        //store list of storeIds for ease of use in query builder
+        this.storeIds = new List<String>(storeIdsToTimestamps.keySet());
     }
 
     public Database.QueryLocator start(Database.BatchableContext bc){
@@ -51,15 +51,18 @@ public class SLDXDataCleanerBatch implements Database.Batchable<sObject>, Databa
             recordsToDelete = records;
         }
 
-        recordsToDelete = findNonSldxRecords(recordsToDelete);
-        
+        return findNonSldxRecords(recordsToDelete);
     }
 
     private List<sObject> findNonSldxRecords(List<sObject> allRecords){
         List<sObject> nonSldxRecords = new List<sObject>(); 
         for(sObject record:recordsToDelete){
+            /*need good error handling while grabbing storeId to ensure if this fails or if Store__c is blank 
+            that the email recipients are notified that this record was not able to be evaluated for SLDX deletion*/
+            String storeId = record.get('Store__c');
+            DateTime timestampToCheck = this.storeIdsToTimestamps.get(storeId);
             //ensure that this is the correct way to check datetime equality, and there are no edge cases
-            if(record.SLDX_Timestamp__c != this.timestamp){
+            if(record.SLDX_Timestamp__c != timestampToCheck){
                 nonSldxRecords.add(record);
             }
         }
